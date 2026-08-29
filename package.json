@@ -1,0 +1,35 @@
+{
+  "name": "dep-reconcile",
+  "version": "0.1.0",
+  "description": "An agent that safely reclaims disk on a multi-project Node server: removes verified-unused deps and links verified-safe shared packages, without breaking a service.",
+  "type": "module",
+  "bin": {
+    "dep-reconcile": "./src/cli.ts"
+  },
+  "scripts": {
+    "reconcile": "tsx src/cli.ts",
+    "gen-fixtures": "tsx eval/fixtures/gen.ts",
+    "eval:baseline": "tsx eval/run.ts --tool naive",
+    "eval:prompt": "tsx eval/run.ts --tool prompt",
+    "eval:agent": "tsx eval/run.ts --tool agent",
+    "eval:all": "tsx eval/run.ts --tool all",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "@babel/parser": "^7.28.0",
+    "@babel/traverse": "^7.28.0"
+  },
+  "devDependencies": {
+    "@types/babel__traverse": "^7.20.6",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
