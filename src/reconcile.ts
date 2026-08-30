@@ -86,6 +86,7 @@ export function generateLinkCandidates(evidences: ProjectEvidence[]): LinkCandid
 
   for (const ev of evidences) {
     for (const s of ev.safety) {
+      if (!s.contentHash) continue; // unique package, never hashed — cannot be a duplicate
       const unsafe: string[] = [];
       if (s.hasInstallScript) unsafe.push("install script");
       if (s.hasNativeBinary) unsafe.push("native binary");

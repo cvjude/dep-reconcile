@@ -17,11 +17,40 @@ function readScripts(pkgDir: string): Record<string, string> {
   }
 }
 
-/** Walk a package dir; report native artifacts and build a content hash. */
-function probeTree(pkgDir: string): { hasNative: boolean; contentHash: string } {
-  const files: { rel: string; size: number; sha: string }[] = [];
-  let hasNative = false;
+/** Cheap walk: detect native artifacts by filename only (no file reads). */
+function detectNative(pkgDir: string): boolean {
+  let found = false;
+  const walk = (dir: string) => {
+    if (found) return;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (found) return;
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) {
+        if (e.name === "node_modules") continue;
+        walk(join(dir, e.name));
+      } else if (e.name.endsWith(".node") || e.name === "binding.gyp") {
+        found = true;
+        return;
+      }
+    }
+  };
+  walk(pkgDir);
+  return found;
+}
 
+/**
+ * Expensive walk: read every file and build a content hash proving byte identity.
+ * Only called for packages that could be cross-project duplicates, never for the
+ * many packages unique to a single project.
+ */
+export function hashPackage(pkgDir: string): string {
+  const files: { rel: string; size: number; sha: string }[] = [];
   const walk = (dir: string, prefix: string) => {
     let entries: Dirent[];
     try {
@@ -30,15 +59,13 @@ function probeTree(pkgDir: string): { hasNative: boolean; contentHash: string } 
       return;
     }
     for (const e of entries) {
+      if (e.isSymbolicLink()) continue;
       const rel = prefix ? `${prefix}/${e.name}` : e.name;
       const full = join(dir, e.name);
-      if (e.isSymbolicLink()) continue;
       if (e.isDirectory()) {
-        // A nested node_modules belongs to the package's own deps; skip for identity.
         if (e.name === "node_modules") continue;
         walk(full, rel);
       } else if (e.isFile()) {
-        if (e.name.endsWith(".node") || e.name === "binding.gyp") hasNative = true;
         try {
           const buf = readFileSync(full);
           files.push({ rel, size: statSync(full).size, sha: createHash("sha1").update(buf).digest("hex") });
@@ -53,7 +80,7 @@ function probeTree(pkgDir: string): { hasNative: boolean; contentHash: string } 
   files.sort((a, b) => (a.rel < b.rel ? -1 : 1));
   const h = createHash("sha256");
   for (const f of files) h.update(`${f.rel}:${f.size}:${f.sha}\n`);
-  return { hasNative, contentHash: h.digest("hex") };
+  return h.digest("hex");
 }
 
 /**
@@ -80,11 +107,15 @@ export function patchedPackages(projectDir: string): Set<string> {
   return out;
 }
 
-/** Produce safety facts for one installed package. */
+/**
+ * Produce the CHEAP safety facts for one installed package (no content hash).
+ * `contentHash` is left empty and filled in later only for dedup candidates.
+ */
 export function probeSafety(pkg: InstalledPkg, patched: Set<string>): SafetyFacts {
   const scripts = readScripts(pkg.path);
   const hasInstallScript = INSTALL_HOOKS.some((h) => scripts[h]);
-  const { hasNative, contentHash } = probeTree(pkg.path);
+  const hasNative = detectNative(pkg.path);
+  const contentHash = "";
   const isPatched = patched.has(pkg.name);
 
   const riskNotes: string[] = [];

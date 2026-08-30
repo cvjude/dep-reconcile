@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { collectProject } from "../src/collect.js";
+import { collectWorkspace } from "../src/collect.js";
 import { generateLinkCandidates } from "../src/reconcile.js";
 import { runNaive } from "../src/tools/naive.js";
 import { runPrompt } from "../src/tools/prompt.js";
@@ -102,7 +102,7 @@ async function main() {
   const toolArg = process.argv[process.argv.indexOf("--tool") + 1] ?? "all";
   const tools = toolArg === "all" ? ["naive", "prompt", "agent"] : [toolArg];
 
-  const evidences = ["appA", "appB", "appC"].map((p) => collectProject(join(WORKSPACE, p)));
+  const evidences = collectWorkspace(["appA", "appB", "appC"].map((p) => join(WORKSPACE, p)));
   const expected = JSON.parse(readFileSync(join(WORKSPACE, "expected.json"), "utf8")) as Expected;
 
   mkdirSync(OUT, { recursive: true });

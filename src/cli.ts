@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { collectProject } from "./collect.js";
+import { collectWorkspace } from "./collect.js";
 import { generateCandidates, generateLinkCandidates } from "./reconcile.js";
 import { analyzeWithAgent, type AgentResult } from "./agent/agent.js";
 import { detectCaches } from "./analyzers/cache.js";
@@ -101,7 +101,21 @@ function printPlan(plan: ReturnType<typeof buildPlan>) {
 }
 
 async function analyze(projects: string[], useAgent: boolean) {
-  const evidences = projects.map((p) => collectProject(p));
+  const err = (s: string) => process.stderr.write(s);
+  const isTty = process.stderr.isTTY;
+  let lastPct = -1;
+  err(`  Scanning ${projects.length} project(s)...\n`);
+  const evidences = collectWorkspace(projects, {
+    onProject: (i, total, dir) => err(`    [${i + 1}/${total}] ${dir.split("/").slice(-2).join("/")}\n`),
+    onHash: (done, total) => {
+      const pct = Math.floor((done / total) * 100);
+      if (pct === lastPct && done !== total) return; // throttle: only on percent change
+      lastPct = pct;
+      if (isTty) err(`\r    hashing shared packages ${done}/${total} (${pct}%)${done === total ? " ✓\n" : ""}`);
+      else if (pct % 25 === 0 || done === total) err(`    hashing shared packages ${done}/${total} (${pct}%)\n`);
+    },
+  });
+  if (useAgent) err(`  Verifying candidates with the agent...\n`);
   const agent = useAgent ? await analyzeWithAgent(evidences) : deterministicResult(evidences);
   const caches = hasFlag("no-caches") ? [] : detectCaches();
   return { evidences, plan: buildPlan(agent, caches) };
