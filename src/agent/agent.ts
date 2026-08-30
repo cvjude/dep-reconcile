@@ -36,24 +36,48 @@ async function verifyUnused(c: Candidate, ev: ProjectEvidence): Promise<Verified
     null,
     2,
   );
-  const { verdict, reason } = await askJson<{ verdict: "confirmed" | "refuted"; reason: string }>({
-    system: UNUSED_SYSTEM,
-    user,
-    maxTokens: 300,
-    traj: "agent-verify-unused",
-  });
-  return { ...c, verdict, reason, fix: verdict === "confirmed" ? `npm uninstall ${c.pkg}` : undefined };
+  try {
+    const { verdict, reason } = await askJson<{ verdict: "confirmed" | "refuted"; reason: string }>({
+      system: UNUSED_SYSTEM,
+      user,
+      maxTokens: 300,
+      traj: "agent-verify-unused",
+    });
+    return { ...c, verdict, reason, fix: verdict === "confirmed" ? `npm uninstall ${c.pkg}` : undefined };
+  } catch {
+    // On any failure, keep the dependency — never remove something we could not verify.
+    return { ...c, verdict: "refuted", reason: "verification unavailable; keeping the dependency to be safe" };
+  }
 }
 
 async function verifyPhantom(c: Candidate, declaredNames: string[]): Promise<VerifiedDiscrepancy> {
   const user = JSON.stringify({ package: c.pkg, evidence: c.evidence, declaredInProject: declaredNames }, null, 2);
-  const { verdict, reason } = await askJson<{ verdict: "confirmed" | "refuted"; reason: string }>({
-    system: PHANTOM_SYSTEM,
-    user,
-    maxTokens: 300,
-    traj: "agent-verify-phantom",
-  });
-  return { ...c, verdict, reason, fix: verdict === "confirmed" ? `npm install ${c.pkg}` : undefined };
+  try {
+    const { verdict, reason } = await askJson<{ verdict: "confirmed" | "refuted"; reason: string }>({
+      system: PHANTOM_SYSTEM,
+      user,
+      maxTokens: 300,
+      traj: "agent-verify-phantom",
+    });
+    return { ...c, verdict, reason, fix: verdict === "confirmed" ? `npm install ${c.pkg}` : undefined };
+  } catch {
+    // On failure, do not report it — conservative default.
+    return { ...c, verdict: "refuted", reason: "verification unavailable" };
+  }
+}
+
+/** Run an async mapper over items with a bounded number in flight at once. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /** Full agentic analysis: deterministic evidence -> adversarial verification -> safe decisions. */
@@ -72,18 +96,17 @@ export async function analyzeWithAgent(evidences: ProjectEvidence[]): Promise<Ag
 
   const evByName = new Map(evidences.map((e) => [e.name, e]));
 
-  // Verify every candidate in parallel (orchestration across candidates).
-  const [verifiedUnused, verifiedPhantom] = await Promise.all([
-    Promise.all(allUnused.map((c) => verifyUnused(c, evByName.get(c.project)!))),
-    Promise.all(
-      allPhantom.map((c) =>
-        verifyPhantom(
-          c,
-          (evByName.get(c.project)?.declared ?? []).map((d) => d.name),
-        ),
-      ),
+  // Verify candidates with bounded concurrency so large workspaces don't hit
+  // API rate limits. A failed verification never crashes the run — it defaults
+  // to keeping the dependency (see verifyUnused/verifyPhantom).
+  const CONCURRENCY = Number(process.env.DR_CONCURRENCY ?? 5);
+  const verifiedUnused = await mapLimit(allUnused, CONCURRENCY, (c) => verifyUnused(c, evByName.get(c.project)!));
+  const verifiedPhantom = await mapLimit(allPhantom, CONCURRENCY, (c) =>
+    verifyPhantom(
+      c,
+      (evByName.get(c.project)?.declared ?? []).map((d) => d.name),
     ),
-  ]);
+  );
 
   recordTrajectory("agent-summary", {
     candidates: { unused: allUnused.length, phantom: allPhantom.length, drift: drift.length },

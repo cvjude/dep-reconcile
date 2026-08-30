@@ -71,6 +71,7 @@ export async function askJson<T>(opts: {
         .filter((b): b is Anthropic.TextBlock => b.type === "text")
         .map((b) => b.text)
         .join("");
+      if (!text.trim()) throw new Error("empty response from model");
       const parsed = JSON.parse(extractJson(text)) as T;
       if (opts.traj) recordTrajectory(opts.traj, { system: opts.system, user: opts.user, response: text });
       return parsed;
